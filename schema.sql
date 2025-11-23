@@ -1,13 +1,11 @@
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
 
--- 1. Jogadores
 CREATE TABLE jogador (
                          id SERIAL PRIMARY KEY,
                          nome VARCHAR(100) NOT NULL
 );
 
--- 2. Peças
 CREATE TABLE peca (
                       id SERIAL PRIMARY KEY,
                       lado1 INT NOT NULL,
@@ -24,7 +22,6 @@ INSERT INTO peca (lado1, lado2) VALUES
                                     (5,5), (5,6),
                                     (6,6);
 
--- 3. Jogo
 CREATE TABLE jogo (
                       id SERIAL PRIMARY KEY,
                       data_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -35,16 +32,14 @@ CREATE TABLE jogo (
                       status VARCHAR(20) DEFAULT 'em_andamento'
 );
 
--- 4. Jogadores vinculados (PONTOS AGORA É FLOAT)
 CREATE TABLE jogo_jogador (
                               id SERIAL PRIMARY KEY,
                               jogo_id INT NOT NULL REFERENCES jogo(id) ON DELETE CASCADE,
                               jogador_id INT NOT NULL REFERENCES jogador(id),
                               equipe SMALLINT DEFAULT 1,
-                              pontos FLOAT DEFAULT 0  -- Alterado para aceitar 7.5, 2.5, etc.
+                              pontos FLOAT DEFAULT 0 -- Importante: FLOAT para aceitar divisão (ex: 2.5)
 );
 
--- 5. Partida (ADICIONADO pontos_ganhos)
 CREATE TABLE partida (
                          id SERIAL PRIMARY KEY,
                          jogo_id INT NOT NULL REFERENCES jogo(id) ON DELETE CASCADE,
@@ -52,18 +47,16 @@ CREATE TABLE partida (
                          vencedor_jogador_id INT REFERENCES jogador(id),
                          vencedor_equipe SMALLINT,
                          trancou BOOLEAN NOT NULL DEFAULT FALSE,
-                         pontos_ganhos INT DEFAULT 0, -- Quantos pontos valeu essa rodada
+                         pontos_ganhos INT DEFAULT 0,
                          data_fim TIMESTAMP
 );
 
--- 6. Mesa
 CREATE TABLE mesa (
                       partida_id INT PRIMARY KEY REFERENCES partida(id) ON DELETE CASCADE,
                       ponta1 INT,
                       ponta2 INT
 );
 
--- 7. Mão
 CREATE TABLE mao_rodada (
                             partida_id INT NOT NULL REFERENCES partida(id) ON DELETE CASCADE,
                             jogador_id INT NOT NULL REFERENCES jogador(id),
@@ -71,14 +64,12 @@ CREATE TABLE mao_rodada (
                             PRIMARY KEY (partida_id, jogador_id, peca_id)
 );
 
--- 8. Monte
 CREATE TABLE monte (
                        partida_id INT NOT NULL REFERENCES partida(id) ON DELETE CASCADE,
                        peca_id INT NOT NULL REFERENCES peca(id),
                        PRIMARY KEY (partida_id, peca_id)
 );
 
--- 9. Movimentos
 CREATE TABLE movimento (
                            id SERIAL PRIMARY KEY,
                            partida_id INT NOT NULL REFERENCES partida(id) ON DELETE CASCADE,
