@@ -1,30 +1,26 @@
--- Ranking por usuário
+-- View 1: Placar Geral de Jogadores (Vitórias em Jogos Completos e Partidas Individuais)
 CREATE OR REPLACE VIEW ranking_por_usuario AS
-SELECT j.id AS jogador_id, j.nome,
-       COALESCE(g.games_won, 0) AS jogos_vencidos,
-       COALESCE(p.matches_won, 0) AS partidas_vencidas
+SELECT
+    j.id AS jogador_id,
+    j.nome,
+    COUNT(DISTINCT jogo.id) AS jogos_vencidos, -- Jogos inteiros (50pts) ganhos pela EQUIPE do jogador
+    COUNT(DISTINCT partida.id) AS partidas_vencidas -- Mãos individuais que o jogador bateu/trancou
 FROM jogador j
-LEFT JOIN (
-    SELECT vencedor_jogador_id AS jogador_id, COUNT(*) AS games_won
-    FROM jogo
-    WHERE vencedor_jogador_id IS NOT NULL
-    GROUP BY vencedor_jogador_id
-) g ON g.jogador_id = j.id
-LEFT JOIN (
-    SELECT vencedor_jogador_id AS jogador_id, COUNT(*) AS matches_won
-    FROM partida
-    WHERE vencedor_jogador_id IS NOT NULL
-    GROUP BY vencedor_jogador_id
-) p ON p.jogador_id = j.id;
+         LEFT JOIN jogo_jogador jj ON jj.jogador_id = j.id
+         LEFT JOIN jogo ON jogo.id = jj.jogo_id AND jogo.vencedor_equipe = jj.equipe
+         LEFT JOIN partida ON partida.vencedor_jogador_id = j.id
+GROUP BY j.id, j.nome
+ORDER BY jogos_vencidos DESC, partidas_vencidas DESC;
 
--- Listagem de Partidas e Vencedores
-CREATE OR REPLACE VIEW partidas_com_vencedores AS
-SELECT pr.id AS partida_id, pr.jogo_id,
-       CASE
-         WHEN pr.vencedor_equipe IS NOT NULL THEN
-            CONCAT('Equipe ', pr.vencedor_equipe)
-         ELSE
-           (SELECT nome FROM jogador WHERE id = pr.vencedor_jogador_id)
-       END AS vencedor_desc
-FROM partida pr
-WHERE pr.data_fim IS NOT NULL;
+-- View 2: Histórico Detalhado
+CREATE OR REPLACE VIEW historico_partidas AS
+SELECT
+    p.id as partida_id,
+    p.numero as rodada_numero,
+    j1.nome as vencedor_nome,
+    CASE WHEN p.trancou THEN 'Sim' ELSE 'Não' END as trancou,
+    p.data_fim
+FROM partida p
+         LEFT JOIN jogador j1 ON j1.id = p.vencedor_jogador_id
+WHERE p.data_fim IS NOT NULL
+ORDER BY p.data_fim DESC;

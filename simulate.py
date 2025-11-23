@@ -1,345 +1,410 @@
-from collections import deque
-
 import psycopg2
 import random
-import time
+import sys
+from collections import deque
 
-# --- CONFIGURAÇÃO DO BANCO DE DADOS ---
+# --- CONFIGURAÇÃO DO BANCO ---
 DB_CONFIG = {
-    "dbname": "capivaragame",  # Nome do seu banco
-    "user": "postgres",  # Seu usuário
-    "password": "marinezpadilhaA1",  # Sua senha
+    "dbname": "capivaragame",
+    "user": "postgres",
+    "password": "marinezpadilhaA1",
     "host": "localhost",
     "port": "5432"
 }
 
-
-def get_db_connection():
+def get_conn():
     conn = psycopg2.connect(**DB_CONFIG)
     conn.autocommit = True
     return conn
 
+def load_sql_file(filename, cursor):
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            cursor.execute(f.read())
+            print(f"✅ {filename} carregado.")
+    except FileNotFoundError:
+        print(f"⚠️ {filename} não encontrado (pulando).")
+    except Exception as e:
+        print(f"❌ Erro em {filename}: {e}")
 
-# --- FUNÇÕES DE VISUALIZAÇÃO ---
-
-def mostrar_maos(partida_id):
-    """Consulta e printa as mãos atuais de todos os jogadores."""
-    conn = get_db_connection()
+def setup_database():
+    conn = get_conn()
     cur = conn.cursor()
+    print("--- Configurando Banco (PostgreSQL) ---")
+    arquivos = ['schema.sql', 'funcoes.sql', 'procedimentos.sql', 'gatilhos.sql', 'visoes.sql']
+    for arq in arquivos:
+        load_sql_file(arq, cur)
+    conn.close()
+    print("---------------------------------------")
 
-    # Busca nome do jogador e suas peças
+# --- VISUALIZAÇÃO ---
+
+def mostrar_maos(partida_id, cur):
     sql = """
-        SELECT j.nome, p.lado1, p.lado2
-        FROM mao_rodada m
-        JOIN jogador j ON j.id = m.jogador_id
-        JOIN peca p ON p.id = m.peca_id
-        WHERE m.partida_id = %s
+        SELECT j.nome, p.lado1, p.lado2 
+        FROM mao_rodada m 
+        JOIN jogador j ON j.id = m.jogador_id 
+        JOIN peca p ON p.id = m.peca_id 
+        WHERE m.partida_id = %s 
         ORDER BY j.nome, p.lado1
     """
     cur.execute(sql, (partida_id,))
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        print("\n--- Mãos Vazias ou Erro ---")
-        return
-
     maos = {}
-    for nome, l1, l2 in rows:
-        if nome not in maos:
-            maos[nome] = []
+    for nome, l1, l2 in cur.fetchall():
+        if nome not in maos: maos[nome] = []
         maos[nome].append(f"[{l1}-{l2}]")
 
-    print("\n=== MÃOS DOS JOGADORES ===")
+    print("\n=== ✋ MÃOS DOS JOGADORES ===")
     for nome, pecas in maos.items():
         print(f"{nome}: {', '.join(pecas)}")
-    print("==========================\n")
+    print("=============================\n")
 
-
-def mostrar_mesa_visual(partida_id):
-    """Reconstroi a linha do dominó baseado no histórico de movimentos."""
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    # Pega todos os movimentos de JOGADA (ignora compras/passos para visualização da mesa)
-    # Retorna 4 colunas: lado, lado1, lado2, turno
+def mostrar_mesa_visual(partida_id, cur):
     sql = """
-        SELECT m.lado, p.lado1, p.lado2, m.turno
-        FROM movimento m
-        JOIN peca p ON p.id = m.peca_id
-        WHERE m.partida_id = %s AND m.acao = 'jogou'
-        ORDER BY m.turno 
+        SELECT m.lado, p.lado1, p.lado2 
+        FROM movimento m 
+        JOIN peca p ON p.id = m.peca_id 
+        WHERE m.partida_id = %s AND m.acao = 'jogou' 
+        ORDER BY m.turno ASC
     """
     cur.execute(sql, (partida_id,))
     movimentos = cur.fetchall()
-    conn.close()
 
     if not movimentos:
-        print("\n=== MESA: [ VAZIA ] ===\n")
+        print("\n=== 🎲 MESA: [ VAZIA ] ===\n")
         return
 
-    # Deque para montar a cobra: (lado_esquerdo, lado_direito)
     cobra = deque()
+    p_esq, p_dir = None, None
 
-    # Variaveis para rastrear as pontas atuais da visualização
-    ponta_esq_atual = None
-    ponta_dir_atual = None
-
-    # CORREÇÃO AQUI: Adicionado '_turno' (ou apenas 'turno') para receber o 4º valor
-    for i, (direcao, p1, p2, turno) in enumerate(movimentos):
-        peca = (p1, p2)
-
+    for i, (lado, l1, l2) in enumerate(movimentos):
         if i == 0:
-            # Primeira peça (geralmente jogada na 'esquerda' ou 'direita' tecnicamente,
-            # mas visualmente é o centro)
-            cobra.append(peca)
-            ponta_esq_atual = p1
-            ponta_dir_atual = p2
-        else:
-            if direcao == 'esquerda':
-                # Precisamos conectar na ponta_esq_atual
-                l1, l2 = peca
-
-                # Se a peça é (3,4) e a ponta atual é 4:
-                # [3|4] - [4|X]...
-                if l2 == ponta_esq_atual:
-                    cobra.appendleft((l1, l2))
-                    ponta_esq_atual = l1
-                else:
-                    # Inverte para conectar: [4|3] - [3|X]...
-                    cobra.appendleft((l2, l1))
-                    ponta_esq_atual = l2
-
-            elif direcao == 'direita':
-                # Conectar na ponta_dir_atual
-                l1, l2 = peca
-
-                # ...[X|4] - [4|3]
-                if l1 == ponta_dir_atual:
-                    cobra.append((l1, l2))
-                    ponta_dir_atual = l2
-                else:
-                    # Inverte: ...[X|3] - [3|4]
-                    cobra.append((l2, l1))
-                    ponta_dir_atual = l1
-
-    # Formata string
-    visual = ",".join([f"[{p[0]}|{p[1]}]" for p in cobra])
-    print(f"\n=== MESA ===\n{visual}\n============\n")
-
-
-# --- FUNÇÕES DO JOGO (SETUP E LÓGICA) ---
-
-def setup_game():
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    print("--- 1. Preparando o Ambiente ---")
-    cur.execute("TRUNCATE TABLE movimento, mao_rodada, monte, mesa, partida, jogo_jogador, jogo CASCADE;")
-
-    nomes = ['Ana', 'Bruno', 'Carlos', 'Daniela']
-    ids_jogadores = []
-    print(f"Criando jogadores: {nomes}")
-    for i, nome in enumerate(nomes):
-        cur.execute("INSERT INTO jogador (nome) VALUES (%s) RETURNING id", (nome,))
-        pid = cur.fetchone()[0]
-        ids_jogadores.append(pid)
-
-    cur.execute("INSERT INTO jogo (pontos_alvo) VALUES (50) RETURNING id")
-    jogo_id = cur.fetchone()[0]
-
-    for i, pid in enumerate(ids_jogadores):
-        equipe = 1 if i % 2 == 0 else 2
-        cur.execute("INSERT INTO jogo_jogador (jogo_id, jogador_id, equipe) VALUES (%s, %s, %s)",
-                    (jogo_id, pid, equipe))
-
-    print("Iniciando Partida 1...")
-    cur.execute("INSERT INTO partida (jogo_id, numero) VALUES (%s, 1) RETURNING id", (jogo_id,))
-    partida_id = cur.fetchone()[0]
-
-    cur.execute("INSERT INTO mesa (partida_id) VALUES (%s)", (partida_id,))
-
-    conn.commit()
-    conn.close()
-    return jogo_id, partida_id, ids_jogadores
-
-
-def distribuir_pecas(partida_id, ids_jogadores):
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    print("--- 2. Embaralhando e Distribuindo ---")
-
-    cur.execute("SELECT id FROM peca")
-    todas_pecas = [row[0] for row in cur.fetchall()]
-    random.shuffle(todas_pecas)
-
-    indice_peca = 0
-    mao_jogador_inicial = None
-
-    for pid in ids_jogadores:
-        mao = todas_pecas[indice_peca: indice_peca + 7]
-        indice_peca += 7
-
-        for peca_id in mao:
-            cur.execute("INSERT INTO mao_rodada (partida_id, jogador_id, peca_id) VALUES (%s, %s, %s)",
-                        (partida_id, pid, peca_id))
-            cur.execute("SELECT lado1, lado2 FROM peca WHERE id = %s", (peca_id,))
-            l1, l2 = cur.fetchone()
-            if l1 == 6 and l2 == 6:
-                mao_jogador_inicial = pid
-
-    sobras = todas_pecas[indice_peca:]
-    for peca_id in sobras:
-        cur.execute("INSERT INTO monte (partida_id, peca_id) VALUES (%s, %s)", (partida_id, peca_id))
-
-    conn.commit()
-    conn.close()
-    return mao_jogador_inicial
-
-
-def simular_rodada(partida_id, ids_jogadores, quem_comeca):
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    idx_atual = ids_jogadores.index(quem_comeca)
-
-    # Pega nome do inicial
-    cur.execute("SELECT nome FROM jogador WHERE id = %s", (quem_comeca,))
-    nome_inicial = cur.fetchone()[0]
-    print(f"--- 3. Jogo Começou! {nome_inicial} tem o 6-6 (ou saída) ---")
-
-    jogo_rolando = True
-    consecutive_passes = 0
-
-    while jogo_rolando:
-        jogador_atual = ids_jogadores[idx_atual]
-
-        # Obter nome
-        cur.execute("SELECT nome FROM jogador WHERE id = %s", (jogador_atual,))
-        nome_atual = cur.fetchone()[0]
-
-        # --- PAUSA INTERATIVA ---
-        print(f"\n>>> Vez de: {nome_atual}")
-        while True:
-            cmd = input("(enter) Jogar | (m) Ver Mãos | (d) Ver Mesa/Dominó | (s) Sair: ").strip().lower()
-
-            if cmd == 'm':
-                mostrar_maos(partida_id)
-            elif cmd == 'd':
-                mostrar_mesa_visual(partida_id)
-            elif cmd == 's':
-                print("Saindo da simulação...")
-                conn.close()
-                exit()
-            elif cmd == '':
-                # Prosseguir com a jogada (Enter)
-                break
+            cobra.append(f"[{l1}|{l2}]")
+            p_esq, p_dir = l1, l2
+        elif lado == 'esquerda':
+            if l2 == p_esq:
+                cobra.appendleft(f"[{l1}|{l2}]"); p_esq = l1
             else:
-                print("Comando inválido.")
+                cobra.appendleft(f"[{l2}|{l1}]"); p_esq = l2
+        elif lado == 'direita':
+            if l1 == p_dir:
+                cobra.append(f"[{l1}|{l2}]"); p_dir = l2
+            else:
+                cobra.append(f"[{l2}|{l1}]"); p_dir = l1
 
-        # --- LÓGICA DE JOGO ORIGINAL ---
+    print(f"\n=== 🎲 MESA ===\n{''.join(cobra)}\n===============\n")
 
-        cur.execute("SELECT ponta1, ponta2 FROM mesa WHERE partida_id = %s", (partida_id,))
-        mesa = cur.fetchone()
-        ponta1, ponta2 = mesa if mesa else (None, None)
+def mostrar_resumo_rodada(partida_id, cur):
+    cur.execute("SELECT vencedor_equipe, pontos_ganhos FROM partida WHERE id=%s", (partida_id,))
+    row = cur.fetchone()
+    if row and row[0] is not None:
+        print(f"\n💰 PLACAR DA PARTIDA: Equipe {row[0]} ganhou +{row[1]} pontos! 💰")
 
+        # Verifica quantos jogaram na equipe vencedora para exibir a divisão correta
         cur.execute("""
-            SELECT m.peca_id, p.lado1, p.lado2 
-            FROM mao_rodada m 
-            JOIN peca p ON p.id = m.peca_id 
-            WHERE m.jogador_id = %s AND m.partida_id = %s
-        """, (jogador_atual, partida_id))
-        mao = cur.fetchall()
+            SELECT COUNT(*) FROM jogo_jogador jj 
+            JOIN partida p ON p.jogo_id = jj.jogo_id 
+            WHERE p.id = %s AND jj.equipe = %s
+        """, (partida_id, row[0]))
+        n_membros = cur.fetchone()[0]
+        if n_membros > 0:
+            print(f"(Dividido: +{row[1]/n_membros} para cada jogador da equipe)")
 
-        peca_escolhida = None
-        lado_escolhido = None
+def mostrar_placar_geral(jogo_id, cur):
+    sql = """
+        SELECT jj.equipe, j.nome, jj.pontos
+        FROM jogo_jogador jj 
+        JOIN jogador j ON j.id = jj.jogador_id
+        WHERE jj.jogo_id = %s 
+        ORDER BY jj.equipe, j.nome
+    """
+    cur.execute(sql, (jogo_id,))
+    rows = cur.fetchall()
 
-        # IA Simples
-        if ponta1 is None:
-            peca_escolhida = mao[0]
-            lado_escolhido = 'esquerda'
-            for p in mao:
-                if p[1] == 6 and p[2] == 6:
-                    peca_escolhida = p
-                    break
-        else:
-            candidatas = []
-            for p in mao:
-                pid, l1, l2 = p
-                # Lógica ajustada para a procedure (ela aceita a peça e o lado, o banco valida)
-                if l1 == ponta1 or l2 == ponta1:
-                    candidatas.append((p, 'esquerda'))
-                elif l1 == ponta2 or l2 == ponta2:
-                    candidatas.append((p, 'direita'))
+    print("\n=== 🏆 PLACAR DO JOGO ATUAL (Alvo: 50) ===")
+    equipes = {}
+    for equipe, nome, pts in rows:
+        if equipe not in equipes: equipes[equipe] = {"membros": [], "total": 0}
+        pts_fmt = int(pts) if pts.is_integer() else pts
+        equipes[equipe]["membros"].append(f"{nome}: {pts_fmt}")
+        equipes[equipe]["total"] += pts
 
-            if candidatas:
-                escolha = random.choice(candidatas)
-                peca_escolhida = escolha[0]
-                lado_escolhido = escolha[1]
+    for eq_id, dados in equipes.items():
+        total_fmt = int(dados['total']) if dados['total'].is_integer() else dados['total']
+        print(f"Equipe {eq_id} [Total: {total_fmt} pts]")
+        for membro in dados["membros"]:
+            print(f"   ↳ {membro}")
+    print("==========================================\n")
 
-        if peca_escolhida:
-            try:
-                # Feedback visual do que vai acontecer
-                l1, l2 = peca_escolhida[1], peca_escolhida[2]
-                print(f"ACTION: {nome_atual} joga [{l1}-{l2}] na {lado_escolhido}")
+def mostrar_ranking_vitorias(cur):
+    sql = """
+        SELECT j.nome, COUNT(p.id) as vitorias
+        FROM jogador j
+        JOIN jogo_jogador jj ON jj.jogador_id = j.id
+        JOIN partida p ON p.jogo_id = jj.jogo_id AND p.vencedor_equipe = jj.equipe
+        WHERE p.data_fim IS NOT NULL
+        GROUP BY j.nome
+        ORDER BY vitorias DESC, j.nome ASC;
+    """
+    cur.execute(sql)
+    rows = cur.fetchall()
+    print("\n=== 🥇 RANKING GERAL DE RODADAS VENCIDAS ===")
+    if not rows: print("Nenhuma rodada finalizada ainda.")
+    else:
+        for i, (nome, vitorias) in enumerate(rows, 1):
+            print(f"{i}º {nome}: {vitorias} vitórias")
+    print("============================================\n")
 
-                cur.execute("CALL jogar_peca(%s, %s, %s, %s)",
-                            (jogador_atual, partida_id, peca_escolhida[0], lado_escolhido))
-                consecutive_passes = 0
+def limpar_banco_dados(conn, cur):
+    print("\n⚠️  ATENÇÃO ⚠️")
+    escolha = input("Deseja DELETAR todo o histórico do banco de dados? (s/n): ").lower().strip()
+    if escolha == 's':
+        try:
+            print("Limpando tabelas...")
+            cur.execute("TRUNCATE TABLE movimento, mao_rodada, monte, mesa, partida, jogo_jogador, jogo, jogador CASCADE;")
+            print("✅ Banco de dados limpo com sucesso!")
+        except Exception as e:
+            print(f"❌ Erro ao limpar banco: {e}")
+    else:
+        print("Dados mantidos.")
 
-                cur.execute("SELECT COUNT(*) FROM mao_rodada WHERE jogador_id = %s AND partida_id = %s",
-                            (jogador_atual, partida_id))
-                if cur.fetchone()[0] == 0:
-                    print(f"\n!!! VITÓRIA DE {nome_atual} !!!")
-                    jogo_rolando = False
-            except Exception as e:
-                print(f"Erro ao jogar: {e}")
-                jogo_rolando = False
-        else:
-            cur.execute("SELECT COUNT(*) FROM monte WHERE partida_id = %s", (partida_id,))
-            monte_qtd = cur.fetchone()[0]
+# --- MOTOR DO JOGO ---
 
-            if monte_qtd > 0:
-                print(f"ACTION: {nome_atual} comprou do monte...")
-                cur.execute("CALL comprar_do_monte(%s, %s)", (jogador_atual, partida_id))
-            else:
-                print(f"ACTION: {nome_atual} PASSOU a vez.")
-                cur.execute(
-                    "INSERT INTO movimento (partida_id, turno, jogador_id, acao) VALUES (%s, (SELECT COUNT(*)+1 FROM movimento WHERE partida_id=%s), %s, 'passou')",
-                    (partida_id, partida_id, jogador_atual))
-                consecutive_passes += 1
+def run_game():
+    setup_database()
+    conn = get_conn()
+    cur = conn.cursor()
 
-        cur.execute("SELECT verificar_se_trancou(%s)", (partida_id,))
-        trancou = cur.fetchone()[0]
+    # --- 1. CRIAÇÃO GLOBAL DE JOGADORES (Pool de Jogadores) ---
+    # Eles existem independente do jogo/partida
+    print("--- Inicializando Jogadores ---")
+    lista_nomes_full = ['Ana', 'Bruno', 'Carlos', 'Daniela']
+    ids_jogadores_map = {} # Dicionario {Nome: ID}
 
-        if trancou or consecutive_passes >= 4:
-            print("\n--- JOGO TRANCADO ---")
-            cur.execute("UPDATE partida SET data_fim = CURRENT_TIMESTAMP, trancou = TRUE WHERE id = %s", (partida_id,))
-            jogo_rolando = False
-
-        idx_atual = (idx_atual + 1) % 4
-
-    conn.close()
-
-
-if __name__ == "__main__":
-    try:
-        jid, pid, jogadores = setup_game()
-        quem_comeca = distribuir_pecas(pid, jogadores)
-        if quem_comeca is None:
-            quem_comeca = jogadores[0]
-
-        simular_rodada(pid, jogadores, quem_comeca)
-
-        print("\n--- FIM DA SIMULAÇÃO ---")
-
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM partidas_com_vencedores WHERE partida_id = %s", (pid,))
+    for nome in lista_nomes_full:
+        # Insere se não existe, ou pega o ID se já existe (útil se não limpou o banco)
+        cur.execute("SELECT id FROM jogador WHERE nome = %s", (nome,))
         res = cur.fetchone()
         if res:
-            print(f"Resultado DB: {res}")
+            ids_jogadores_map[nome] = res[0]
+        else:
+            cur.execute("INSERT INTO jogador (nome) VALUES (%s) RETURNING id", (nome,))
+            ids_jogadores_map[nome] = cur.fetchone()[0]
 
-    except Exception as e:
-        print(f"Erro fatal: {e}")
+    print(f"Jogadores Disponíveis: {', '.join(lista_nomes_full)}")
+
+    # Variáveis de controle do estado do Jogo (Placar acumulado)
+    current_jogo_id = None
+    last_n_players = 0
+    num_rodada = 0
+
+    simulacao_ativa = True
+
+    while simulacao_ativa:
+        print("\n" + "="*40)
+        print(f"PREPARAÇÃO PARA A RODADA {num_rodada + 1}")
+        print("="*40)
+
+        # --- 2. ESCOLHA DE JOGADORES PARA A RODADA ---
+        while True:
+            try:
+                inp = input("Quantos jogadores participarão DESTA rodada (2, 3 ou 4)? [s p/ sair]: ").strip().lower()
+                if inp == 's':
+                    simulacao_ativa = False
+                    break
+                n_jogadores = int(inp)
+                if 2 <= n_jogadores <= 4:
+                    break
+                print("Inválido. Escolha 2, 3 ou 4.")
+            except ValueError:
+                print("Digite um número.")
+
+        if not simulacao_ativa: break
+
+        # --- 3. GERENCIAMENTO DO JOGO (Placar) ---
+        # Se mudou o número de jogadores, precisamos criar um NOVO jogo (novo placar),
+        # pois as equipes mudam (de Dupla pra Individual, etc).
+        # Se for a primeira vez, também cria.
+
+        nomes_da_rodada = lista_nomes_full[:n_jogadores]
+        ids_da_rodada = [ids_jogadores_map[n] for n in nomes_da_rodada]
+
+        if current_jogo_id is None or n_jogadores != last_n_players:
+            if current_jogo_id is not None:
+                print("\nℹ️  Mudança de configuração detectada! Iniciando NOVO JOGO (Placar zerado).")
+
+            cur.execute("INSERT INTO jogo (pontos_alvo) VALUES (50) RETURNING id")
+            current_jogo_id = cur.fetchone()[0]
+
+            # Configurar Equipes para este novo jogo
+            print(f"Configurando equipes para {n_jogadores} jogadores...")
+            for i, pid in enumerate(ids_da_rodada):
+                if n_jogadores == 4:
+                    equipe = 1 if i % 2 == 0 else 2 # Duplas (0,2) vs (1,3)
+                else:
+                    equipe = i + 1 # Individual
+                cur.execute("INSERT INTO jogo_jogador (jogo_id, jogador_id, equipe) VALUES (%s, %s, %s)", (current_jogo_id, pid, equipe))
+
+            last_n_players = n_jogadores
+            num_rodada = 0 # Reinicia contagem de rodadas deste jogo
+        else:
+            print("ℹ️  Mantendo configuração e placar acumulado.")
+
+        # Verifica se o jogo anterior já acabou (50 pts)
+        cur.execute("SELECT status FROM jogo WHERE id=%s", (current_jogo_id,))
+        st = cur.fetchone()
+        if st and st[0] == 'finalizado':
+            print("O jogo anterior já atingiu 50 pontos. Iniciando um novo...")
+            cur.execute("INSERT INTO jogo (pontos_alvo) VALUES (50) RETURNING id")
+            current_jogo_id = cur.fetchone()[0]
+            # Recria as equipes
+            for i, pid in enumerate(ids_da_rodada):
+                if n_jogadores == 4: equipe = 1 if i % 2 == 0 else 2
+                else: equipe = i + 1
+                cur.execute("INSERT INTO jogo_jogador (jogo_id, jogador_id, equipe) VALUES (%s, %s, %s)", (current_jogo_id, pid, equipe))
+            num_rodada = 0
+
+        num_rodada += 1
+        print(f"\n>>> 🚩 INICIANDO RODADA {num_rodada} (Modo: {n_jogadores} Jogadores) <<<")
+
+        cur.execute("INSERT INTO partida (jogo_id, numero) VALUES (%s, %s) RETURNING id", (current_jogo_id, num_rodada))
+        partida_id = cur.fetchone()[0]
+        cur.execute("INSERT INTO mesa (partida_id) VALUES (%s)", (partida_id,))
+
+        # Embaralhar
+        cur.execute("SELECT id FROM peca ORDER BY RANDOM()")
+        todas_pecas = [r[0] for r in cur.fetchall()]
+
+        # Distribuir apenas para os jogadores DA RODADA
+        idx = 0
+        for pid in ids_da_rodada:
+            mao = todas_pecas[idx:idx+7]
+            idx += 7
+            for peca_id in mao:
+                cur.execute("INSERT INTO mao_rodada VALUES (%s, %s, %s)", (partida_id, pid, peca_id))
+
+        for p in todas_pecas[idx:]:
+            cur.execute("INSERT INTO monte VALUES (%s, %s)", (partida_id, p))
+
+        # Quem Começa
+        sql_start = """
+            SELECT m.jogador_id, m.peca_id, p.lado1, p.lado2
+            FROM mao_rodada m JOIN peca p ON p.id = m.peca_id
+            WHERE m.partida_id = %s
+            ORDER BY (p.lado1=6 AND p.lado2=6) DESC, (p.lado1=p.lado2) DESC, (p.lado1+p.lado2) DESC, GREATEST(p.lado1, p.lado2) DESC LIMIT 1
+        """
+        cur.execute(sql_start, (partida_id,))
+        start_pid, start_peca_id, sl1, sl2 = cur.fetchone()
+
+        idx_start = ids_da_rodada.index(start_pid)
+        fila_jogadores = ids_da_rodada[idx_start:] + ids_da_rodada[:idx_start]
+
+        cur.execute("SELECT nome FROM jogador WHERE id=%s", (start_pid,))
+        print(f"--- 🔔 SAÍDA: {cur.fetchone()[0]} com [{sl1}-{sl2}] ---")
+
+        partida_rolando = True
+        passes_consecutivos = 0
+        turno_idx = 0
+
+        # === LOOP DA MÃO (JOGADAS) ===
+        while partida_rolando:
+            pid_atual = fila_jogadores[turno_idx % n_jogadores]
+            cur.execute("SELECT nome FROM jogador WHERE id=%s", (pid_atual,))
+            nome_atual = cur.fetchone()[0]
+
+            print(f"\n>>> Vez de: {nome_atual}")
+            while True:
+                prompt = "(Enter) Jogar" + (" [OBRIGATÓRIO]" if turno_idx==0 else "") + " | (m) Mãos | (d) Mesa | (p) Placar | (r) Ranking | (s) Sair: "
+                cmd = input(prompt).strip().lower()
+                if cmd == 'm': mostrar_maos(partida_id, cur)
+                elif cmd == 'd': mostrar_mesa_visual(partida_id, cur)
+                elif cmd == 'p': mostrar_placar_geral(current_jogo_id, cur)
+                elif cmd == 'r': mostrar_ranking_vitorias(cur)
+                elif cmd == 's': conn.close(); sys.exit()
+                elif cmd == '': break
+                else: print("Inválido.")
+
+            cur.execute("SELECT ponta1, ponta2 FROM mesa WHERE partida_id=%s", (partida_id,))
+            p1, p2 = (cur.fetchone() or (None, None))
+
+            cur.execute("SELECT m.peca_id, p.lado1, p.lado2 FROM mao_rodada m JOIN peca p ON p.id = m.peca_id WHERE m.jogador_id=%s AND m.partida_id=%s", (pid_atual, partida_id))
+            mao = cur.fetchall()
+
+            jogada = None
+            if turno_idx == 0:
+                for p in mao:
+                    if p[0] == start_peca_id: jogada = (p, 'esquerda'); break
+            elif p1 is None:
+                jogada = (mao[0], 'esquerda')
+            else:
+                candidatas = []
+                for p in mao:
+                    if p[1] == p1 or p[2] == p1: candidatas.append((p, 'esquerda'))
+                    elif p[1] == p2 or p[2] == p2: candidatas.append((p, 'direita'))
+
+                if candidatas:
+                    # IA Mão Leve
+                    candidatas.sort(key=lambda x: x[0][1] + x[0][2], reverse=True)
+                    jogada = candidatas[0]
+
+            if jogada:
+                peca, lado = jogada
+                print(f"ACTION: {nome_atual} joga [{peca[1]}-{peca[2]}] na {lado}")
+                try:
+                    cur.execute("CALL jogar_peca(%s, %s, %s, %s)", (pid_atual, partida_id, peca[0], lado))
+                    passes_consecutivos = 0
+                    cur.execute("SELECT data_fim FROM partida WHERE id=%s", (partida_id,))
+                    if cur.fetchone()[0]:
+                        print(f"\n🎉 VITÓRIA DE {nome_atual} (Bateu)!")
+                        partida_rolando = False
+                except Exception as e: print(f"Erro: {e}")
+            else:
+                cur.execute("SELECT COUNT(*) FROM monte WHERE partida_id=%s", (partida_id,))
+                if cur.fetchone()[0] > 0:
+                    print(f"ACTION: {nome_atual} compra do monte...")
+                    cur.execute("CALL comprar_do_monte(%s, %s)", (pid_atual, partida_id))
+                else:
+                    print(f"ACTION: {nome_atual} PASSOU a vez.")
+                    cur.execute("INSERT INTO movimento (partida_id, turno, jogador_id, acao) VALUES (%s, (SELECT COALESCE(MAX(turno), 0) + 1 FROM movimento WHERE partida_id = %s), %s, 'passou')", (partida_id, partida_id, pid_atual))
+                    passes_consecutivos += 1
+
+            if partida_rolando:
+                cur.execute("SELECT verificar_se_trancou(%s)", (partida_id,))
+                if cur.fetchone()[0] or passes_consecutivos >= n_jogadores:
+                    print("\n🔒 JOGO TRANCOU 🔒")
+                    cur.execute("SELECT * FROM calcular_vencedor_tranca(%s)", (partida_id,))
+                    res = cur.fetchone()
+                    if res:
+                        v_id, v_eq, pts = res
+                        print(f"Vence Equipe {v_eq} (Leva {pts} pontos).")
+                        cur.execute("UPDATE partida SET data_fim=CURRENT_TIMESTAMP, vencedor_jogador_id= %s, vencedor_equipe= %s, trancou=TRUE WHERE id=%s", (v_id, v_eq, partida_id))
+                    partida_rolando = False
+
+            turno_idx += 1
+
+        # === FIM DA RODADA ===
+        mostrar_mesa_visual(partida_id, cur)
+        mostrar_resumo_rodada(partida_id, cur)
+        mostrar_placar_geral(current_jogo_id, cur)
+        mostrar_ranking_vitorias(cur)
+
+        cur.execute("SELECT status, vencedor_equipe FROM jogo WHERE id=%s", (current_jogo_id,))
+        st = cur.fetchone()
+        if st and st[0] == 'finalizado':
+            print(f"\n🏆🏆🏆 JOGO ENCERRADO! EQUIPE {st[1]} ATINGIU 50 PONTOS! 🏆🏆🏆")
+            # Pergunta se quer limpar
+            limpar_banco_dados(conn, cur)
+            # Reseta IDs para forçar novo jogo na próxima iteração
+            current_jogo_id = None
+            last_n_players = 0
+        else:
+            print("Pressione Enter para iniciar a próxima rodada...")
+            input()
+
+    conn.close()
+    print("Fim da simulação.")
+
+if __name__ == "__main__":
+    try: run_game()
+    except KeyboardInterrupt: print("\nFim.")
+    except Exception as e: print(f"\nERRO: {e}")
