@@ -3,7 +3,7 @@ import random
 import sys
 from collections import deque
 
-# --- CONFIGURAÇÃO DO BANCO ---
+# Informações do Banco
 DB_CONFIG = {
     "dbname": "capivaragame",
     "user": "postgres",
@@ -23,21 +23,21 @@ def load_sql_file(filename, cursor):
             cursor.execute(f.read())
             print(f"✅ {filename} carregado.")
     except FileNotFoundError:
-        print(f"⚠️ {filename} não encontrado (pulando).")
+        print(f"{filename} não encontrado (pulando).")
     except Exception as e:
         print(f"❌ Erro em {filename}: {e}")
 
 def setup_database():
     conn = get_conn()
     cur = conn.cursor()
-    print("--- Configurando Banco (PostgreSQL) ---")
+    print(" Configurando Banco (PostgreSQL) ")
     arquivos = ['schema.sql', 'funcoes.sql', 'procedimentos.sql', 'gatilhos.sql', 'visoes.sql']
     for arq in arquivos:
         load_sql_file(arq, cur)
     conn.close()
-    print("---------------------------------------")
+    print("")
 
-# --- VISUALIZAÇÃO ---
+#  VISUALIZAÇÃO 
 
 def mostrar_maos(partida_id, cur):
     sql = """
@@ -54,10 +54,10 @@ def mostrar_maos(partida_id, cur):
         if nome not in maos: maos[nome] = []
         maos[nome].append(f"[{l1}-{l2}]")
 
-    print("\n=== ✋ MÃOS DOS JOGADORES ===")
+    print("\nMãos:")
     for nome, pecas in maos.items():
         print(f"{nome}: {', '.join(pecas)}")
-    print("=============================\n")
+    print("\n")
 
 def mostrar_mesa_visual(partida_id, cur):
     sql = """
@@ -71,7 +71,7 @@ def mostrar_mesa_visual(partida_id, cur):
     movimentos = cur.fetchall()
 
     if not movimentos:
-        print("\n=== 🎲 MESA: [ VAZIA ] ===\n")
+        print("\nMesa vazia!!!\n")
         return
 
     cobra = deque()
@@ -92,7 +92,7 @@ def mostrar_mesa_visual(partida_id, cur):
             else:
                 cobra.append(f"[{l2}|{l1}]"); p_dir = l1
 
-    print(f"\n=== 🎲 MESA ===\n{''.join(cobra)}\n===============\n")
+    print(f"\nMesa: \n{''.join(cobra)}")
 
 def mostrar_resumo_rodada(partida_id, cur):
     cur.execute("SELECT vencedor_equipe, pontos_ganhos FROM partida WHERE id=%s", (partida_id,))
@@ -109,13 +109,12 @@ def mostrar_resumo_rodada(partida_id, cur):
         """, (partida_id, equipe_venc))
         n_membros = cur.fetchone()[0]
 
-        print(f"\n💰 RESULTADO DA RODADA: Equipe {equipe_venc} venceu +{pontos} pontos! 💰")
+        print(f"\nEquipe {equipe_venc} venceu e marcou +{pontos} pontos")
         if n_membros > 0:
             pts_div = pontos / n_membros
-            print(f"   Matemática: {pontos} pontos ÷ {n_membros} jogador(es) = {pts_div} para cada.")
+            print(f"  Cálculo {pontos} pontos ÷ {n_membros} jogador(es) = {pts_div} para cada.")
 
 def mostrar_placar_individual_acumulado(cur):
-    """Mostra o ranking individual acumulado de TODA a sessão."""
     sql = """
         SELECT j.nome, COALESCE(SUM(jj.pontos), 0) as total
         FROM jogador j
@@ -126,7 +125,7 @@ def mostrar_placar_individual_acumulado(cur):
     cur.execute(sql)
     rows = cur.fetchall()
 
-    print("\n=== 🏆 PLACAR GERAL ACUMULADO (SESSÃO) ===")
+    print("\n Acumulado no Banco")
     if not rows:
         print("Nenhum ponto marcado ainda.")
     else:
@@ -134,7 +133,7 @@ def mostrar_placar_individual_acumulado(cur):
             # Formata float bonitinho
             total_fmt = int(total) if total % 1 == 0 else total
             print(f"{i}º {nome}: {total_fmt} pts")
-    print("==========================================\n")
+    print("==\n")
 
 def mostrar_ranking_vitorias(cur):
     sql = """
@@ -148,12 +147,12 @@ def mostrar_ranking_vitorias(cur):
     """
     cur.execute(sql)
     rows = cur.fetchall()
-    print("\n=== 🥇 PARTIDAS VENCIDAS (RODADAS) ===")
+    print("\nPartidas Vencidas:")
     if not rows: print("Nenhuma rodada finalizada ainda.")
     else:
         for i, (nome, vitorias) in enumerate(rows, 1):
             print(f"{i}º {nome}: {vitorias} vitórias")
-    print("========================================\n")
+    print("\n")
 
 def limpar_banco_dados(conn, cur):
     print("\n⚠️  ATENÇÃO ⚠️")
@@ -175,20 +174,18 @@ def mostrar_formacao_equipes(jogo_id, cur):
         WHERE jj.jogo_id = %s GROUP BY jj.equipe ORDER BY jj.equipe
     """, (jogo_id,))
     rows = cur.fetchall()
-    print("\n📢 FORMAÇÃO DAS EQUIPES DESTA RODADA:")
+    print("\nEquipes:\n")
     for eq, membros in rows:
         print(f"   Equipe {eq}: {' & '.join(membros)}")
     print("")
 
-# --- MOTOR DO JOGO ---
+#  MOTOR DO JOGO 
 
 def run_game():
     setup_database()
     conn = get_conn()
     cur = conn.cursor()
 
-    # --- 1. INICIALIZAÇÃO ---
-    print("--- Inicializando Jogadores ---")
     lista_nomes_full = ['Ana', 'Bruno', 'Carlos', 'Daniela']
     ids_jogadores_map = {}
 
@@ -208,11 +205,10 @@ def run_game():
     simulacao_ativa = True
 
     while simulacao_ativa:
-        print("\n" + "="*40)
-        print(f"PREPARAÇÃO PARA A RODADA {num_rodada_sessao + 1}")
-        print("="*40)
+        print(f"Rodada {num_rodada_sessao + 1}\n")
 
-        # --- ESCOLHA ---
+
+        #  ESCOLHA 
         while True:
             try:
                 inp = input("Quantos jogadores participarão DESTA rodada (2, 3 ou 4)? [s p/ sair]: ").strip().lower()
@@ -229,7 +225,7 @@ def run_game():
         nomes_da_rodada = lista_nomes_full[:n_jogadores]
         ids_da_rodada = [ids_jogadores_map[n] for n in nomes_da_rodada]
 
-        # --- SETUP DO PLACAR ---
+        #  SETUP DO PLACAR 
         # Cria novo jogo se mudou o número de jogadores (pois muda a lógica de equipes)
         if current_jogo_id is None or n_jogadores != last_n_players:
             cur.execute("INSERT INTO jogo (pontos_alvo) VALUES (50) RETURNING id")
@@ -245,7 +241,7 @@ def run_game():
             cur.execute("SELECT status FROM jogo WHERE id=%s", (current_jogo_id,))
             st = cur.fetchone()
             if st and st[0] == 'finalizado':
-                print("O jogo anterior acabou. Iniciando novo ciclo de 50 pontos...")
+                print("O jogo anterior acabou. Iniciando novo ciclo de 50 pontos")
                 cur.execute("INSERT INTO jogo (pontos_alvo) VALUES (50) RETURNING id")
                 current_jogo_id = cur.fetchone()[0]
                 for i, pid in enumerate(ids_da_rodada):
@@ -254,7 +250,7 @@ def run_game():
                     cur.execute("INSERT INTO jogo_jogador (jogo_id, jogador_id, equipe) VALUES (%s, %s, %s)", (current_jogo_id, pid, equipe))
 
         num_rodada_sessao += 1
-        print(f"\n>>> 🚩 INICIANDO RODADA {num_rodada_sessao} <<<")
+        print(f"\nRodada {num_rodada_sessao} iniciada")
         mostrar_formacao_equipes(current_jogo_id, cur)
 
         cur.execute("INSERT INTO partida (jogo_id, numero) VALUES (%s, %s) RETURNING id", (current_jogo_id, num_rodada_sessao))
@@ -282,7 +278,7 @@ def run_game():
         idx_start = ids_da_rodada.index(start_pid)
         fila = ids_da_rodada[idx_start:] + ids_da_rodada[:idx_start]
         cur.execute("SELECT nome FROM jogador WHERE id=%s", (start_pid,))
-        print(f"--- 🔔 SAÍDA: {cur.fetchone()[0]} com [{sl1}-{sl2}] ---")
+        print(f"Lançamento {cur.fetchone()[0]} com [{sl1}-{sl2}] ")
 
         partida_rolando = True
         passes = 0
@@ -293,7 +289,7 @@ def run_game():
             cur.execute("SELECT nome FROM jogador WHERE id=%s", (pid_atual,))
             nome_atual = cur.fetchone()[0]
 
-            print(f"\n>>> Vez de: {nome_atual}")
+            print(f"\nJogada de {nome_atual}")
             while True:
                 prompt = "(Enter) Jogar" + (" [OBRIGATÓRIO]" if t_idx==0 else "") + " | (m) Mãos | (d) Mesa | (p) Placar | (r) Ranking | (s) Sair: "
                 cmd = input(prompt).strip().lower()
@@ -334,13 +330,13 @@ def run_game():
                     passes = 0
                     cur.execute("SELECT data_fim FROM partida WHERE id=%s", (partida_id,))
                     if cur.fetchone()[0]:
-                        print(f"\n🎉 VITÓRIA DE {nome_atual} (Bateu)!")
+                        print(f"\n {nome_atual} Venceu! (Bateu)!")
                         partida_rolando = False
                 except Exception as e: print(f"Erro: {e}")
             else:
                 cur.execute("SELECT COUNT(*) FROM monte WHERE partida_id=%s", (partida_id,))
                 if cur.fetchone()[0]>0:
-                    print(f"ACTION: {nome_atual} compra do monte...")
+                    print(f"{nome_atual} comprou do monte")
                     cur.execute("CALL comprar_do_monte(%s, %s)", (pid_atual, partida_id))
                 else:
                     print(f"ACTION: {nome_atual} PASSOU a vez.")
@@ -350,12 +346,12 @@ def run_game():
             if partida_rolando:
                 cur.execute("SELECT verificar_se_trancou(%s)", (partida_id,))
                 if cur.fetchone()[0] or passes >= n_jogadores:
-                    print("\n🔒 JOGO TRANCOU 🔒")
+                    print("\nJogo trancado, nenhuma jogada possível")
                     cur.execute("SELECT * FROM calcular_vencedor_tranca(%s)", (partida_id,))
                     res = cur.fetchone()
                     if res:
                         v_id, v_eq, pts = res
-                        print(f"Vence Equipe {v_eq} (Leva {pts} pontos).")
+                        print(f"Vence Equipe {v_eq} ({pts} pontos).")
                         cur.execute("UPDATE partida SET data_fim=CURRENT_TIMESTAMP, vencedor_jogador_id= %s, vencedor_equipe= %s, trancou=TRUE WHERE id=%s", (v_id, v_eq, partida_id))
                     partida_rolando = False
             t_idx += 1
@@ -368,7 +364,7 @@ def run_game():
         cur.execute("SELECT status, vencedor_equipe FROM jogo WHERE id=%s", (current_jogo_id,))
         st = cur.fetchone()
         if st and st[0] == 'finalizado':
-            print(f"\n🏆🏆🏆 JOGO ENCERRADO (50 pts)! Vencedor: Equipe {st[1]} 🏆🏆🏆")
+            print(f"\nJogo encerrado! Vencedor: Equipe {st[1]}")
             limpar_banco_dados(conn, cur)
             current_jogo_id = None
         else:
@@ -380,4 +376,4 @@ def run_game():
 if __name__ == "__main__":
     try: run_game()
     except KeyboardInterrupt: print("\nFim.")
-    except Exception as e: print(f"\nERRO: {e}")
+    except Exception as e: print(f"\nErro: {e}")

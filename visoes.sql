@@ -1,10 +1,10 @@
--- View 1: Placar Geral de Jogadores (Vitórias em Jogos Completos e Partidas Individuais)
+-- Placar Geral da Partida
 CREATE OR REPLACE VIEW ranking_por_usuario AS
 SELECT
     j.id AS jogador_id,
     j.nome,
-    COUNT(DISTINCT jogo.id) AS jogos_vencidos, -- Jogos inteiros (50pts) ganhos pela EQUIPE do jogador
-    COUNT(DISTINCT partida.id) AS partidas_vencidas -- Mãos individuais que o jogador bateu/trancou
+    COUNT(DISTINCT jogo.id) AS jogos_vencidos,
+    COUNT(DISTINCT partida.id) AS partidas_vencidas
 FROM jogador j
          LEFT JOIN jogo_jogador jj ON jj.jogador_id = j.id
          LEFT JOIN jogo ON jogo.id = jj.jogo_id AND jogo.vencedor_equipe = jj.equipe
@@ -12,7 +12,7 @@ FROM jogador j
 GROUP BY j.id, j.nome
 ORDER BY jogos_vencidos DESC, partidas_vencidas DESC;
 
--- View 2: Histórico Detalhado
+-- Histórico de Partidas
 CREATE OR REPLACE VIEW historico_partidas AS
 SELECT
     p.id as partida_id,

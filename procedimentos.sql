@@ -1,4 +1,4 @@
--- Procedure: Jogar uma peça
+-- Procedimento de Jogar Peça
 CREATE OR REPLACE PROCEDURE jogar_peca(
     p_jogador_id INT,
     p_partida_id INT,
@@ -13,7 +13,6 @@ DECLARE
     v_jogo_id INT;
     v_equipe INT;
 BEGIN
-    -- 1. Validações básicas
     IF NOT EXISTS (SELECT 1 FROM mao_rodada WHERE partida_id = p_partida_id AND jogador_id = p_jogador_id AND peca_id = p_peca_id) THEN
         RAISE EXCEPTION 'Peça não pertence ao jogador.';
     END IF;
@@ -21,9 +20,9 @@ BEGIN
     SELECT lado1, lado2 INTO v_l1, v_l2 FROM peca WHERE id = p_peca_id;
     SELECT ponta1, ponta2 INTO v_ponta1, v_ponta2 FROM mesa WHERE partida_id = p_partida_id;
 
-    -- 2. Lógica de Mesa
+
     IF v_ponta1 IS NULL THEN
-        -- Primeira jogada
+
         UPDATE mesa SET ponta1 = v_l1, ponta2 = v_l2 WHERE partida_id = p_partida_id;
     ELSE
         IF p_direcao = 'esquerda' THEN
@@ -39,19 +38,17 @@ BEGIN
         END IF;
     END IF;
 
-    -- 3. Movimento
+
     DELETE FROM mao_rodada WHERE partida_id = p_partida_id AND jogador_id = p_jogador_id AND peca_id = p_peca_id;
 
     INSERT INTO movimento (partida_id, turno, jogador_id, peca_id, lado, acao)
     VALUES (p_partida_id, (SELECT COALESCE(MAX(turno),0)+1 FROM movimento WHERE partida_id=p_partida_id), p_jogador_id, p_peca_id, p_direcao, 'jogou');
 
-    -- 4. Verifica Vitória (Bateu)
     IF NOT EXISTS (SELECT 1 FROM mao_rodada WHERE partida_id = p_partida_id AND jogador_id = p_jogador_id) THEN
-        -- Recupera dados para finalizar
+
         SELECT jogo_id INTO v_jogo_id FROM partida WHERE id = p_partida_id;
         SELECT equipe INTO v_equipe FROM jogo_jogador WHERE jogador_id = p_jogador_id AND jogo_id = v_jogo_id;
 
-        -- Atualiza partida (Gatilho fará o resto)
         UPDATE partida
         SET data_fim = CURRENT_TIMESTAMP,
             vencedor_jogador_id = p_jogador_id,
@@ -62,7 +59,7 @@ BEGIN
 END;
 $$;
 
--- Procedure: Comprar do Monte
+-- Procedimento de Compra do Monte
 CREATE OR REPLACE PROCEDURE comprar_do_monte(p_jogador_id INT, p_partida_id INT)
     LANGUAGE plpgsql AS $$
 DECLARE
